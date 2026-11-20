@@ -1,4 +1,4 @@
-# Oh My Keymint - Attestation Bridge
+# OhMyKeymint trade-off
 
 > 本仓库是基于 [ITxiao6666/OhMyKeymint](https://github.com/ITxiao6666/OhMyKeymint) v1.4.4 修改的下游版本，不是官方版本，也不代表上游维护者。本版本的问题请反馈至[本仓库 Issues](https://github.com/Wangsheng509211/OhMyKeymint-downstream/issues)。
 

@@ -1,6 +1,6 @@
 {
-  "version": "v1.4.4-264-rebuild",
-  "versionCode": 264,
-  "zipUrl": "https://github.com/Wangsheng509211/OhMyKeymint-downstream/releases/download/v1.4.4-264-rebuild/OhMyKeymint-1.4.4-264-rebuild.zip",
+  "version": "v1.4.4-1.0-233cb21",
+  "versionCode": 265,
+  "zipUrl": "https://github.com/Wangsheng509211/OhMyKeymint-downstream/releases/download/v1.4.4-1.0-233cb21/OhMyKeymint-1.4.4-1.0-233cb21.zip",
   "changelog": "https://raw.githubusercontent.com/Wangsheng509211/OhMyKeymint-downstream/master/changelog.md"
 }

@@ -1,6 +1,6 @@
 id=keymaster
 name=OhMyKeymint trade-off
-version=1.4.4-1.0-494ce11
+version=1.4.4-1.0-7b96bcd
 versionCode=265
 author=Wangsheng509211
 description=Custom keystore implementation for Android Keystore Spoofer 开源模块，二改自用，禁止倒卖；下游自用重构版（AGPL-3.0-or-later，基于 Oh My Keymint 1.4.4）。

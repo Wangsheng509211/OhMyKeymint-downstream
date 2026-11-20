@@ -4,6 +4,11 @@ version = "1.4.4"
 edition = "2021"
 license-file = "LICENSE.md"
 
+[lib]
+name = "omk_keymint"
+path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]
+
 [[bin]]
 name = "keymint"
 path = "src/main.rs"

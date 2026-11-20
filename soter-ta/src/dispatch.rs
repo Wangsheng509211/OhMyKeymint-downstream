@@ -11,6 +11,8 @@
 //! daemon first resolves the complete argument layout with [`resolve_request`]
 //! and then uses [`handle_request`]. Both paths share the same argument codec.
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use crate::error::{
     SOTER_ERR_BAD_VALUE, SOTER_ERR_NO_KEY, SOTER_ERR_NO_SESSION, SOTER_ERR_TA_UNAVAILABLE,
 };
@@ -39,6 +41,11 @@ pub const ATTK_TRANSACTIONS: [u32; 3] = [TX_EXPORT_ATTK, TX_GENERATE_ATTK, TX_VE
 
 /// Maximum argument payload accepted at the Binder boundary.
 pub const MAX_REQUEST_BYTES: usize = 64 * 1024;
+
+/// Transactions that were left to the stock HAL, and how many were logged.
+static UNHANDLED: AtomicU64 = AtomicU64::new(0);
+static AMBIGUOUS: AtomicU64 = AtomicU64::new(0);
+const UNHANDLED_LOG_LIMIT: u64 = 32;
 const MAX_STRING_BYTES: usize = 8192;
 
 const COMPACT_TRANSACTIONS: [u32; 11] = [
@@ -78,6 +85,37 @@ pub fn handles(tx: u32) -> bool {
             | TX_REMOVE_AUTH
             | TX_VERIFY_ATTK
     )
+}
+
+/// Count a transaction this TA deliberately leaves to the stock HAL.
+///
+/// A split view (metadata from the vendor HAL, business replies from the local
+/// identity) is exactly what cross-checking detectors look for; the counter
+/// makes that traffic measurable instead of invisible.
+pub fn note_unhandled(wire_tx: u32) {
+    let total = UNHANDLED.fetch_add(1, Ordering::Relaxed) + 1;
+    if total <= UNHANDLED_LOG_LIMIT {
+        log::warn!("SOTER unhandled transaction left to stock HAL wire_tx={wire_tx} total={total}");
+    }
+}
+
+/// Number of transactions left to the stock HAL since process start.
+pub fn unhandled_count() -> u64 {
+    UNHANDLED.load(Ordering::Relaxed)
+}
+
+/// Count a request whose payload is a complete call in both the standard and
+/// the compact contract, so it was left to the stock HAL instead of guessed.
+pub fn note_ambiguous(wire_tx: u32) {
+    let total = AMBIGUOUS.fetch_add(1, Ordering::Relaxed) + 1;
+    if total <= UNHANDLED_LOG_LIMIT {
+        log::warn!("SOTER ambiguous request layout left to stock HAL wire_tx={wire_tx} total={total}");
+    }
+}
+
+/// Number of ambiguous layouts seen since process start.
+pub fn ambiguous_count() -> u64 {
+    AMBIGUOUS.load(Ordering::Relaxed)
 }
 
 /// Whether `tx` reads platform facts (the boot clock and the fingerprint mark).
@@ -218,7 +256,11 @@ pub fn resolve_request(wire_tx: u32, bytes: &[u8]) -> Option<(u32, Request)> {
     match (standard, compact) {
         (Some(left), Some(right)) if left == right => Some(left),
         (Some(result), None) | (None, Some(result)) => Some(result),
-        _ => None,
+        (Some(_), Some(_)) => {
+            note_ambiguous(wire_tx);
+            None
+        }
+        (None, None) => None,
     }
 }
 
@@ -298,7 +340,10 @@ pub fn handle(
         }
         Some(_) => Some(malformed()),
         None if handles(tx) => Some(malformed()),
-        None => None,
+        None => {
+            note_unhandled(tx);
+            None
+        }
     }
 }
 

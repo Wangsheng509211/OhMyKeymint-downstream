@@ -21,8 +21,6 @@ export type ToolEvent =
   | 'syncSecurityPatch'
   | 'restoreSecurityPatch'
   | 'customSecurityPatch'
-  | 'spoofPif'
-  | 'clearGmsCache'
   | 'repairRkp'
   | 'issueRkp'
   | 'openSoterLocal'
@@ -49,7 +47,7 @@ interface ToolRow {
 
 const props = defineProps<{
   securityPatchBusy: BusyPatch
-  maintenanceBusy: 'gms' | 'rkp' | null
+  maintenanceBusy: 'rkp' | null
   rkpIssuanceBusy: boolean
   securityPatch: string | null
 }>()
@@ -60,8 +58,6 @@ const emit = defineEmits<{
   syncSecurityPatch: []
   restoreSecurityPatch: []
   applySecurityPatch: [date: string]
-  spoofPif: []
-  clearGmsCache: []
   repairRkp: []
   issueRkp: []
   openSoterLocal: []
@@ -75,8 +71,6 @@ function runTool(event: ToolEvent): void {
     case 'installKeybox': emit('installKeybox'); break
     case 'syncSecurityPatch': emit('syncSecurityPatch'); break
     case 'restoreSecurityPatch': emit('restoreSecurityPatch'); break
-    case 'spoofPif': emit('spoofPif'); break
-    case 'clearGmsCache': emit('clearGmsCache'); break
     case 'repairRkp': emit('repairRkp'); break
     case 'issueRkp': emit('issueRkp'); break
     case 'openSoterLocal': emit('openSoterLocal'); break
@@ -185,22 +179,8 @@ const groups = computed<{ title: string, rows: ToolRow[] }[]>(() => [
     ],
   },
   {
-    title: tr('tools_play_integrity', 'Play Integrity'),
+    title: tr('tools_misc', 'Miscellaneous'),
     rows: [
-      {
-        key: 'pif',
-        event: 'spoofPif',
-        icon: null,
-        title: tr('menu_spoof_pif_fingerprint', 'Spoof PIF fingerprint'),
-        summary: tr('tools_pif_desc', 'Fetch and apply a Pixel fingerprint for Play Integrity.'),
-      },
-      {
-        key: 'gms',
-        event: 'clearGmsCache',
-        icon: Reset,
-        title: tr('tools_clear_gms_cache', 'Clear GMS cache'),
-        summary: tr('tools_clear_gms_cache_desc', 'Clear Play services and Play Store caches, keep app data, then stop the specified processes.'),
-      },
       {
         key: 'patch',
         sheet: 'patch',
@@ -214,7 +194,7 @@ const groups = computed<{ title: string, rows: ToolRow[] }[]>(() => [
 ])
 
 function isBusy(event: ToolEvent): boolean {
-  if (event === 'clearGmsCache' || event === 'repairRkp') return props.maintenanceBusy !== null
+  if (event === 'repairRkp') return props.maintenanceBusy !== null
   if (event === 'issueRkp') return props.rkpIssuanceBusy
   if (event === 'syncSecurityPatch' || event === 'restoreSecurityPatch') {
     return props.securityPatchBusy !== null
@@ -225,7 +205,6 @@ function isBusy(event: ToolEvent): boolean {
 function isActiveBusy(event: ToolEvent): boolean {
   return (event === 'syncSecurityPatch' && props.securityPatchBusy === 'sync')
     || (event === 'restoreSecurityPatch' && props.securityPatchBusy === 'restore')
-    || (event === 'clearGmsCache' && props.maintenanceBusy === 'gms')
     || (event === 'repairRkp' && props.maintenanceBusy === 'rkp')
     || (event === 'issueRkp' && props.rkpIssuanceBusy)
 }

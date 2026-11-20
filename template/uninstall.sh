@@ -13,14 +13,14 @@ remove_omk_directory() {
   case "$target" in
     /data/adb/omk|/data/misc/keystore/omk) ;;
     *)
-      echo "[oh_my_keymint] refusing unexpected cleanup path: $target" >&2
+      echo "[keymaster] refusing unexpected cleanup path: $target" >&2
       return 1
       ;;
   esac
 
   if [ -e "$target" ] || [ -L "$target" ]; then
     if ! rm -rf "$target"; then
-      echo "[oh_my_keymint] failed to remove $target" >&2
+      echo "[keymaster] failed to remove $target" >&2
       return 1
     fi
   fi

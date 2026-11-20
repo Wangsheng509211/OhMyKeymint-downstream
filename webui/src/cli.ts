@@ -6,7 +6,7 @@ import {
   isSecurityPatchDate,
 } from './security_patch'
 
-const MODULE_ROOT = '/data/adb/modules/oh_my_keymint'
+const MODULE_ROOT = '/data/adb/modules/keymaster'
 const HOT_UPDATE_ROOT = '/data/adb/omk'
 const SUPPORTED_ABIS = ['arm64-v8a', 'x86_64'] as const
 type SupportedAbi = typeof SUPPORTED_ABIS[number]

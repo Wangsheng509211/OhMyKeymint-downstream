@@ -1,6 +1,9 @@
 #!/system/bin/sh
 
-MODDIR=${0%/*}
+MODDIR=${MODDIR:-${0%/*}}
+if [ ! -d "$MODDIR/libs" ] && [ -d /data/adb/modules/keymaster ]; then
+  MODDIR=/data/adb/modules/keymaster
+fi
 STATE_DIR=/data/adb/omk
 RESTART_FILE=$STATE_DIR/restart.keymint
 PEER_RESTART_FILE=$STATE_DIR/restart.injector

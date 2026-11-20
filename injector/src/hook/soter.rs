@@ -121,18 +121,31 @@ fn receive(fd: i32, connection: BinderStateKey, bytes: &[u8]) {
             native_read(fd, cmd);
             if _ioc_nr(cmd) == BR_TRANSACTION_NR {
                 if let Some(tr) = transaction(payload) {
-                    let app = if tr.data_size <= MAX_REQUEST_BYTES {
+                    let token = if tr.data_size <= MAX_REQUEST_BYTES {
                         copy_process_buffer(unsafe { tr.data.ptr.buffer } as usize, tr.data_size)
                             .ok()
                             .and_then(|data| hal::aidl_token(&data))
-                            .is_some_and(|(token, _)| token == hal::APP)
+                            .map(|(token, _)| token)
                     } else {
-                        false
+                        None
                     };
+                    let app = token.as_deref() == Some(hal::APP);
+                    // SOTER SDK builds may call the vendor HAL directly from the
+                    // calling app instead of going through SոտerServer's Java
+                    // service. Such a HAL transaction still carries the app's
+                    // euid, so scope it like an SDK call; SoterServer's own HAL
+                    // calls carry its uid and stay unscoped.
+                    let direct_hal = !app
+                        && token
+                            .as_deref()
+                            .is_some_and(|token| token == hal::QTI || token == hal::TRUSTONIC)
+                        && u32::try_from(tr.sender_euid)
+                            .ok()
+                            .is_some_and(|uid| (10000..20000).contains(&(uid % 100000)));
                     let oneway = tr.flags & TF_ONE_WAY != 0;
-                    let uid = u32::try_from(tr.sender_euid)
-                        .ok()
-                        .filter(|uid| app && !oneway && (10000..20000).contains(&(uid % 100000)));
+                    let uid = u32::try_from(tr.sender_euid).ok().filter(|uid| {
+                        (app || direct_hal) && !oneway && (10000..20000).contains(&(uid % 100000))
+                    });
                     if app {
                         if let Some(client) =
                             CLIENT.read().unwrap_or_else(|e| e.into_inner()).as_ref()

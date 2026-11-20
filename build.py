@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """
 Build script for OhMyKeymint Android targets.
 """
@@ -183,7 +183,7 @@ def build_binary(
     print(f"Building {bin_name} for {abi} ({target}, {build_type})...")
 
     env, cargo_patch = cargo_context_for_target(target)
-    cmd = ["cargo", "+nightly", "--config", cargo_patch, "build", "--target", target]
+    cmd = ["cargo", "+nightly-x86_64-pc-windows-gnu", "--config", cargo_patch, "build", "--target", target]
     if package:
         cmd.extend(["-p", package, "--bin", bin_name])
     else:
@@ -221,7 +221,7 @@ def build_cdylib(
     env, cargo_patch = cargo_context_for_target(target)
     cmd = [
         "cargo",
-        "+nightly",
+        "+nightly-x86_64-pc-windows-gnu",
         "--config",
         cargo_patch,
         "build",

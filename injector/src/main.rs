@@ -19,6 +19,7 @@ pub mod ipc;
 pub mod legacy;
 pub mod logging;
 pub mod parcel;
+mod soter_mark;
 mod soter_watch;
 pub mod sys;
 pub mod tracker;
@@ -184,11 +185,124 @@ fn handle_webui_config_command() -> Option<Result<String, String>> {
     }
 }
 
+
+/// Conceal this process from casual /proc inspection: rename the thread
+/// command and overwrite the argv strings the kernel exposes in
+/// `/proc/<pid>/cmdline`. Arguments are already parsed by the time this runs.
+fn conceal_process(comm: &str) {
+    let comm = std::ffi::CString::new(comm).unwrap_or_default();
+    unsafe {
+        libc::prctl(libc::PR_SET_NAME, comm.as_ptr() as libc::c_ulong, 0, 0, 0);
+    }
+    let Ok(stat) = std::fs::read_to_string("/proc/self/stat") else {
+        return;
+    };
+    let Some(close) = stat.rfind(')') else { return };
+    let fields: Vec<&str> = stat[close + 1..].split_whitespace().collect();
+    let (Some(start), Some(end)) = (fields.get(45), fields.get(46)) else {
+        return;
+    };
+    let (Ok(start), Ok(end)) = (start.parse::<usize>(), end.parse::<usize>()) else {
+        return;
+    };
+    if end <= start || end - start > 1024 * 1024 {
+        return;
+    }
+    // Keep the terminating NUL: only the visible characters are blanked.
+    unsafe {
+        let name = b"keymaster";
+        let span = end - start;
+        let n = name.len().min(span.saturating_sub(1));
+        std::ptr::copy_nonoverlapping(name.as_ptr(), start as *mut u8, n);
+        std::ptr::write_bytes((start as *mut u8).add(n), b' ', span - n - 1);
+    }
+}
+
+
+/// Keystore2 guard: injects into the current keystore2 process whenever the
+/// payload state does not name it, and honours restart.injector. Replaces the
+/// shell supervisor so no script process is visible in /proc.
+fn guard_loop() -> ! {
+    use std::time::Duration;
+
+    let state = std::path::Path::new("/data/adb/omk/injector.payload");
+    let restart = std::path::Path::new("/data/adb/omk/restart.injector");
+    loop {
+        let forced = restart.exists();
+        if forced {
+            let _ = std::fs::remove_file(restart);
+        }
+        if let Ok((pid, _)) = utils::find_process_by_name("keystore2") {
+            let current = std::fs::read_to_string(state)
+                .ok()
+                .and_then(|text| text.split_whitespace().next().and_then(|p| p.parse::<i32>().ok()));
+            if forced || current != Some(pid) {
+                match inject::inject_library(nix::unistd::Pid::from_raw(pid)) {
+                    Ok(()) => log::info!("keystore2 guard injected pid={pid}"),
+                    Err(error) => log::warn!("keystore2 guard injection failed: {error:#}"),
+                }
+            }
+        }
+        std::thread::sleep(Duration::from_secs(5));
+    }
+}
+
+
+/// Start the in-process KeyMint runtime when embedded mode is enabled.
+///
+/// The library is copied to /data/misc/keystore/omk at boot so keystore2 can
+/// load it without touching the module directory.
+fn start_embedded_keymint() {
+    if !std::path::Path::new("/data/misc/keystore/omk/embedded").exists() {
+        return;
+    }
+    let mut handle = std::ptr::null_mut();
+    for candidate in ["/system/lib64/libomk_keymint.so", "/data/misc/keystore/omk/libomk_keymint.so"] {
+        let Ok(path) = std::ffi::CString::new(candidate) else { continue };
+        handle = unsafe { libc::dlopen(path.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+        if !handle.is_null() {
+            log::info!("embedded keymint library loaded from {candidate}");
+            break;
+        }
+        let detail = unsafe {
+            let error = libc::dlerror();
+            if error.is_null() {
+                "unknown".to_string()
+            } else {
+                std::ffi::CStr::from_ptr(error).to_string_lossy().into_owned()
+            }
+        };
+        log::error!("embedded keymint dlopen {candidate} failed: {detail}");
+    }
+    if handle.is_null() {
+        return;
+    }
+    let symbol = unsafe { libc::dlsym(handle, c"omk_keymint_serve".as_ptr()) };
+    if symbol.is_null() {
+        log::error!("embedded keymint entry missing");
+        return;
+    }
+    let entry: unsafe extern "C" fn() -> i32 = unsafe { std::mem::transmute(symbol) };
+    let _ = std::thread::Builder::new()
+        .name("keymint-runtime".into())
+        .spawn(move || {
+            log::info!("embedded keymint runtime starting");
+            let code = unsafe { entry() };
+            log::error!("embedded keymint runtime exited with {code}");
+        });
+}
+
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some("--guard") {
+        conceal_process("keymaster");
+        logging::init_logger_fallback(LevelFilter::Info);
+        guard_loop();
+    }
     if std::env::args().nth(1).as_deref() == Some("--soter-watch") {
         if std::env::args().count() != 2 {
             std::process::exit(2);
         }
+        conceal_process("keymaster");
         logging::init_logger_fallback(LevelFilter::Info);
         if let Err(error) = soter_watch::run() {
             error!("Local SOTER supervisor failed: {error:#}");
@@ -201,6 +315,7 @@ fn main() {
             eprintln!("--auto-targets-watch does not accept arguments");
             std::process::exit(2);
         }
+        conceal_process("keymaster");
         logging::init_logger_fallback(LevelFilter::Warn);
         if let Err(error) = auto_targets::run_watcher() {
             eprintln!("automatic app selection watcher failed: {error:#}");
@@ -230,6 +345,7 @@ fn main() {
         return;
     }
 
+    conceal_process("keymaster");
     logging::init_logger_fallback(LevelFilter::Debug);
     let config = config::get();
     if config::parse_level_filter(&config.main.log_level).is_none() {
@@ -317,6 +433,8 @@ pub extern "C" fn entry(handle: *const c_void) -> bool {
         error!("failed to initialize binder ioctl hook: {error:#}");
         return false;
     }
+    soter_mark::install();
+    start_embedded_keymint();
     true
 }
 

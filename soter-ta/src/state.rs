@@ -2,6 +2,8 @@
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
+use std::io::Write;
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
 use openssl::{
@@ -26,11 +28,16 @@ const RSA_EXPONENT: u32 = 65537;
 /// How long a sign session may stay open before its biometric evidence stops
 /// counting.
 ///
-/// The stock TA keeps its own freshness window inside the secure world and this
-/// work never captured it; two minutes is generous with a slow caller and still
-/// refuses a session that sat open long enough for an unrelated fingerprint
-/// match to fall inside it.
-pub const BIO_WINDOW_MS: u64 = 120_000;
+/// Android's stock user-auth timeout for biometric-bound keys is 30 seconds;
+/// a longer software window would accept evidence the platform already treats
+/// as stale, which is both weaker and observable. Sessions also stop counting
+/// after [`SESSION_MAX_AGE_MS`] regardless of the gate.
+pub const BIO_WINDOW_MS: u64 = 30_000;
+
+/// Hard upper bound for a session that never reaches `finishSign`. Older
+/// entries are dropped on the next `initSign` so a client that opens sessions
+/// without finishing them cannot grow the ledger.
+pub const SESSION_MAX_AGE_MS: u64 = 4 * BIO_WINDOW_MS;
 
 /// Suffix of the temporary file the atomic write goes through.
 const SIDECAR_TEMP: &str = ".tmp";
@@ -46,16 +53,33 @@ fn sibling_path(path: &Path, suffix: &str) -> PathBuf {
 
 /// Owner-only permissions for anything that holds key material.
 fn set_owner_only(path: &Path) -> std::io::Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+}
+
+/// Write `raw` to `path` atomically: owner-only temporary file, fsync, rename,
+/// then fsync the directory so the rename itself is durable.
+fn write_atomic(path: &Path, raw: &[u8]) -> std::io::Result<()> {
+    let temporary = sibling_path(path, SIDECAR_TEMP);
+    let result = (|| -> std::io::Result<()> {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .open(&temporary)?;
+        file.write_all(raw)?;
+        file.sync_all()?;
+        drop(file);
+        std::fs::rename(&temporary, path)?;
+        let parent = path.parent().unwrap_or_else(|| Path::new("."));
+        std::fs::File::open(parent)?.sync_all()
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temporary);
     }
-    #[cfg(not(unix))]
-    {
-        let _ = path;
-    }
-    Ok(())
+    result
 }
 
 /// A key pair in PEM form, so the whole ledger fits in one JSON file.
@@ -215,20 +239,23 @@ impl TaState {
     pub fn store(&self, path: &Path) -> std::io::Result<()> {
         let bytes = serde_json::to_vec_pretty(self)
             .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
-        let tmp = sibling_path(path, SIDECAR_TEMP);
-        std::fs::write(&tmp, &bytes)?;
-        set_owner_only(&tmp)?;
         if path.exists() {
-            std::fs::copy(path, sibling_path(path, SIDECAR_BACKUP))?;
+            let backup = sibling_path(path, SIDECAR_BACKUP);
+            std::fs::copy(path, &backup)?;
+            set_owner_only(&backup)?;
         }
-        std::fs::rename(&tmp, path)?;
-        set_owner_only(path)?;
-        Ok(())
+        write_atomic(path, &bytes)
     }
 
     fn next_counter(&mut self, uid: u32) -> u64 {
         let entry = self.uids.entry(uid).or_default();
-        entry.counter = entry.counter.wrapping_add(1);
+        if entry.counter == u64::MAX {
+            // Saturating keeps the anti-rollback value monotonic; wrapping
+            // would restart at zero and look like a rolled-back device.
+            log::warn!("SOTER counter saturated for uid {uid}");
+        } else {
+            entry.counter += 1;
+        }
         entry.counter
     }
 
@@ -416,6 +443,17 @@ impl TaState {
         if self.auth_of(uid, kname).is_none() {
             return (SOTER_ERR_NO_AUTH_KEY, 0);
         }
+        // Sessions from an earlier boot can never carry evidence, and a
+        // client that never finishes them must not grow the ledger forever.
+        if let Some(now) = platform.boot_ms {
+            self.sessions.retain(|_, session| {
+                session
+                    .opened_ms
+                    .is_some_and(|opened| now.saturating_sub(opened) <= SESSION_MAX_AGE_MS)
+            });
+        } else {
+            self.sessions.clear();
+        }
         if self.sessions.len() >= 512 {
             return (SOTER_ERR_TA_UNAVAILABLE, 0);
         }
@@ -509,5 +547,22 @@ impl TaState {
             Ok(bytes) => (SOTER_OK, bytes),
             Err(_) => (SOTER_ERR_TA_UNAVAILABLE, Vec::new()),
         }
+    }
+}
+
+
+#[cfg(test)]
+mod counter_tests {
+    use super::*;
+    use crate::error::SOTER_OK;
+
+    #[test]
+    fn counter_saturates_instead_of_rolling_back() {
+        let mut state = TaState::generate_local().expect("state");
+        state.generate_ask(42);
+        state.uids.get_mut(&42).expect("uid").counter = u64::MAX;
+        let (code, _) = state.export_ask(42);
+        assert_eq!(code, SOTER_OK);
+        assert_eq!(state.uids[&42].counter, u64::MAX);
     }
 }

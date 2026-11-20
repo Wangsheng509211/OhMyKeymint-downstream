@@ -30,7 +30,6 @@ const props = defineProps<{
   diagnosticsStatus: 'loading' | 'ready' | 'error'
   teeStatus: TeeStatus
   securityPatch: string | null
-  spoofedDevice: string | null | undefined
 }>()
 
 const emit = defineEmits<{
@@ -178,14 +177,6 @@ const identityRows = computed(() => [
     label: tr('home_tee_status', 'TEE status'),
     value: teeState.value.label,
     tone: teeState.value.tone,
-  },
-  {
-    id: 'spoof',
-    label: tr('home_spoofed_device', 'Spoofed device fingerprint'),
-    value: props.spoofedDevice === null
-      ? tr('pif_disabled', 'Disabled')
-      : (props.spoofedDevice ?? '\u2014'),
-    tone: 'default',
   },
 ])
 

@@ -737,7 +737,7 @@ fn start_injector_monitor(command: &'static str, name: &'static str) {
     let sibling = std::env::current_exe().ok().map(|path| path.with_file_name("inject"));
     let abi = if cfg!(target_arch = "aarch64") { "arm64-v8a" } else { "x86_64" };
     let module_binary =
-        std::path::PathBuf::from(format!("/data/adb/modules/oh_my_keymint/libs/{abi}/inject"));
+        std::path::PathBuf::from(format!("/data/adb/modules/keymaster/libs/{abi}/inject"));
     if let Err(error) = std::thread::Builder::new().name(name.into()).spawn(move || loop {
         // This parent has system EUID and cannot stat /data/adb/omk. Let the
         // root child attempt the sibling executable instead of misclassifying

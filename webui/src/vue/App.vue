@@ -27,7 +27,6 @@ import { i18n } from '../i18n'
 import { fetchLatestSecurityPatch } from '../security_patch'
 import { isDev } from '../utils/dev'
 import HomeView, { type KeyboxStatus, type ModuleStatus, type TeeStatus } from './HomeView.vue'
-import PifFingerprintDialog from './PifFingerprintDialog.vue'
 import SettingsView from './SettingsView.vue'
 import SoterIdentityDialog from './SoterIdentityDialog.vue'
 import TargetsView from './TargetsView.vue'
@@ -62,10 +61,8 @@ const diagnostics = shallowRef<DiagnosticsState | null>(null)
 const diagnosticsStatus = ref<'loading' | 'ready' | 'error'>('loading')
 const teeStatus = ref<TeeStatus>('loading')
 const securityPatch = ref<string | null>(null)
-const spoofedDevice = ref<string | null | undefined>(undefined)
 const securityPatchBusy = ref<'sync' | 'restore' | null>(null)
-const maintenanceBusy = ref<'gms' | 'rkp' | null>(null)
-const gmsConfirmOpen = ref(false)
+const maintenanceBusy = ref<'rkp' | null>(null)
 const rkpOpen = ref(false)
 const rkpError = ref('')
 const rkpIssueOpen = ref(false)
@@ -81,7 +78,6 @@ const rkpIssuanceBusy = computed(() => rkpIssueBusy.value || rkpListBusy.value)
 const rkpIssueError = ref('')
 const rkpIssuedArtifacts = ref<RkpIssuedArtifact[]>([])
 const pendingRkpImport = ref<RkpIssuedArtifact | null>(null)
-const pifOpen = ref(false)
 const soterLocalOpen = ref(false)
 const soterLocalDialog = ref<InstanceType<typeof SoterIdentityDialog> | null>(null)
 const keyboxOpen = ref(false)
@@ -90,7 +86,6 @@ const keyboxBusy = ref(false)
 const targetsView = ref<InstanceType<typeof TargetsView> | null>(null)
 const settingsView = ref<InstanceType<typeof SettingsView> | null>(null)
 const toolsView = ref<InstanceType<typeof ToolsView> | null>(null)
-const pifDialog = ref<InstanceType<typeof PifFingerprintDialog> | null>(null)
 
 const pageIds = ['home', 'tools', 'settings'] as const
 const navItems = computed(() => [
@@ -403,16 +398,14 @@ async function refreshIdentity(force = false): Promise<void> {
     keyboxRevocation.value = 'not_listed'
     teeStatus.value = 'normal'
     securityPatch.value = '2026-08-01'
-    spoofedDevice.value = 'Google Pixel 9 Pro'
     return
   }
   try {
     await afterPaint()
-    const [keybox, patch, tee, pif] = await Promise.allSettled([
+    const [keybox, patch, tee] = await Promise.allSettled([
       cli.getKeyboxState(),
       cli.getSystemSecurityPatch(),
       cli.getTeeStatus(),
-      cli.getPifFingerprintState(),
     ])
     if (keybox.status === 'fulfilled') {
       const value = keybox.value
@@ -424,11 +417,6 @@ async function refreshIdentity(force = false): Promise<void> {
     if (patch.status === 'fulfilled') securityPatch.value = patch.value
     if (tee.status === 'fulfilled') teeStatus.value = 'normal'
     else teeStatus.value = 'error'
-    if (pif.status === 'fulfilled') {
-      spoofedDevice.value = pif.value.enabled
-        ? (/^google\s/i.test(pif.value.model) ? pif.value.model : `Google ${pif.value.model}`)
-        : null
-    }
     // The revocation check is a network round trip, so it must not gate the
     // local identity fields or the caller's await. Its result is only applied
     // while the same keybox identity is still on screen.
@@ -540,24 +528,6 @@ async function syncPatch(restore: boolean): Promise<void> {
   }
 }
 
-async function clearGmsCache(): Promise<void> {
-  if (maintenanceBusy.value !== null) return
-  maintenanceBusy.value = 'gms'
-  try {
-    await afterPaint()
-    if (isDev()) {
-      notify(i18n.t('maintenance_preview_only'))
-      return
-    }
-    await cli.clearGmsCache()
-    notify(i18n.t('gms_cache_cleared'))
-    gmsConfirmOpen.value = false
-  } catch (error) {
-    notify(error instanceof Error ? error.message : String(error), true)
-  } finally {
-    maintenanceBusy.value = null
-  }
-}
 
 async function repairRkp(): Promise<void> {
   if (maintenanceBusy.value !== null) return
@@ -672,8 +642,6 @@ function onTool(event: ToolEvent): void {
     case 'installKeybox': void chooseKeybox(); break
     case 'syncSecurityPatch': void syncPatch(false); break
     case 'restoreSecurityPatch': void syncPatch(true); break
-    case 'spoofPif': pifOpen.value = true; break
-    case 'clearGmsCache': gmsConfirmOpen.value = true; break
     case 'repairRkp': rkpError.value = ''; rkpOpen.value = true; break
     case 'issueRkp': void openRkpIssue(); break
     case 'openSoterLocal': soterLocalOpen.value = true; break
@@ -778,15 +746,6 @@ watch(targetsOpen, open => {
   })
 })
 
-watch(pifOpen, open => {
-  if (open && !overlayHistory.has('pif-fingerprint')) {
-    overlayHistory.add('pif-fingerprint')
-    history.push('pif-fingerprint', () => {
-      overlayHistory.delete('pif-fingerprint')
-      pifDialog.value?.requestClose()
-    })
-  } else if (!open && overlayHistory.delete('pif-fingerprint')) history.consume('pif-fingerprint')
-})
 watch(soterLocalOpen, open => {
   if (open && !overlayHistory.has('soter-local')) {
     overlayHistory.add('soter-local')
@@ -864,7 +823,6 @@ watch(rkpImportConfirmOpen, open => {
           :diagnostics-status="diagnosticsStatus"
           :tee-status="teeStatus"
           :security-patch="securityPatch"
-          :spoofed-device="spoofedDevice"
           @refresh-diagnostics="refreshDiagnostics"
         />
       </Transition>
@@ -883,8 +841,6 @@ watch(rkpImportConfirmOpen, open => {
           @sync-security-patch="onTool('syncSecurityPatch')"
           @restore-security-patch="onTool('restoreSecurityPatch')"
           @apply-security-patch="applyPatchDate"
-          @spoof-pif="onTool('spoofPif')"
-          @clear-gms-cache="onTool('clearGmsCache')"
           @repair-rkp="onTool('repairRkp')"
           @issue-rkp="onTool('issueRkp')"
           @open-soter-local="onTool('openSoterLocal')"
@@ -959,32 +915,7 @@ watch(rkpImportConfirmOpen, open => {
       </template>
     </MiuixDialog>
 
-    <PifFingerprintDialog
-      ref="pifDialog"
-      v-model="pifOpen"
-      :cli="cli"
-      @notify="notify"
-      @changed="refreshIdentity(true)"
-    />
-    <MiuixDialog
-      :model-value="gmsConfirmOpen"
-      :title="i18n.t('gms_cache_confirm_title')"
-      :close-on-click-modal="maintenanceBusy !== 'gms'"
-      @update:model-value="value => { if (maintenanceBusy !== 'gms') gmsConfirmOpen = value }"
-    >
-      <div class="confirm-sheet" :aria-busy="maintenanceBusy === 'gms'">
-        <p>{{ i18n.t('gms_cache_confirm_warning') }}</p>
-        <div class="confirm-actions">
-          <MiuixButton :disabled="maintenanceBusy === 'gms'" @click="gmsConfirmOpen = false">
-            {{ i18n.t('functional_button_cancel') }}
-          </MiuixButton>
-          <MiuixButton type="primary" :disabled="maintenanceBusy !== null" @click="clearGmsCache">
-            <MiuixProgressIndicator v-if="maintenanceBusy === 'gms'" type="circular" :size="18" />
-            {{ i18n.t('gms_cache_confirm') }}
-          </MiuixButton>
-        </div>
-      </div>
-    </MiuixDialog>
+
     <MiuixDialog
       :model-value="rkpOpen"
       :title="i18n.t('tools_repair_rkp')"

@@ -171,7 +171,7 @@ reapply_security_patch_early() (
     CURRENT_VENDOR=$("$GETPROP_BIN" ro.vendor.build.security_patch 2>/dev/null)
     CURRENT_SYSTEM=$("$GETPROP_BIN" ro.build.version.security_patch 2>/dev/null)
     if [ "$CURRENT_VENDOR" != "$PATCH_DATE" ] || [ "$CURRENT_SYSTEM" != "$PATCH_DATE" ]; then
-      echo "[oh_my_keymint] unable to apply security patch $PATCH_DATE before framework startup" >&2
+      echo "[keymaster] unable to apply security patch $PATCH_DATE before framework startup" >&2
     fi
   fi
   return 0

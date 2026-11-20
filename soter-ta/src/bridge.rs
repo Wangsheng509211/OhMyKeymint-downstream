@@ -21,6 +21,7 @@ const MAX_FRAME: usize = 4 * 1024 * 1024;
 const AUTH_TIMEOUT: Duration = Duration::from_secs(2);
 const CALL_TIMEOUT: Duration = Duration::from_secs(25);
 const UNAVAILABLE: i32 = -20;
+static PEER_REJECTED: AtomicU64 = AtomicU64::new(0);
 // Process-local diagnostic state only: never retain credentials or write a file.
 
 #[derive(Default, Deserialize, Serialize)]
@@ -297,7 +298,51 @@ pub fn active_config() -> Result<Option<identities::Config>, String> {
 }
 
 /// Private root-created channels handed only to the exact SoterServer process.
+/// Check and log who is on the other end of the inherited channel.
+///
+/// The host ends live in the injector while the client ends are injected into
+/// `com.tencent.soter.soterserver` (uid `system` on stock builds), so root is
+/// not the expected peer. The check records the credentials and counts peers
+/// outside the accepted set (`root`, `system`) instead of trusting whoever
+/// happens to hold the descriptor.
+fn verify_peer(stream: &UnixStream, role: &str) -> io::Result<()> {
+    use std::os::fd::AsRawFd;
+    let mut cred = libc::ucred { pid: 0, uid: 0, gid: 0 };
+    let mut length = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+    let status = unsafe {
+        libc::getsockopt(
+            stream.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_PEERCRED,
+            (&mut cred as *mut libc::ucred).cast(),
+            &mut length,
+        )
+    };
+    if status != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let expected = matches!(cred.uid, 0 | 1000);
+    if !expected {
+        PEER_REJECTED.fetch_add(1, Ordering::Relaxed);
+    }
+    log::info!(
+        target: "omk_soter_local",
+        "event=soter stage=peer role={role} uid={} pid={} gid={} expected={expected}",
+        cred.uid,
+        cred.pid,
+        cred.gid
+    );
+    Ok(())
+}
+
+/// Peers outside the accepted credential set since process start.
+pub fn peer_rejected() -> u64 {
+    PEER_REJECTED.load(Ordering::Relaxed)
+}
+
 pub fn serve(mut auth: UnixStream, mut calls: UnixStream) -> io::Result<()> {
+    verify_peer(&auth, "auth")?;
+    verify_peer(&calls, "calls")?;
     auth.set_write_timeout(Some(AUTH_TIMEOUT))?;
     calls.set_write_timeout(Some(CALL_TIMEOUT))?;
     std::thread::Builder::new().name("omk-soter-allow".into()).spawn(move || {

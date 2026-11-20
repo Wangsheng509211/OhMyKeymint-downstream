@@ -96,7 +96,12 @@ fn execute_authorization_mirror(
 ) -> anyhow::Result<()> {
     match request {
         ParsedAuthorizationRequest::AddAuthToken { auth_token } => {
-            ipc::with_omk_auth_token_once(|auth| Ok(auth.r#addAuthToken(Some(caller), auth_token)?))
+            let result =
+                ipc::with_omk_auth_token_once(|auth| Ok(auth.r#addAuthToken(Some(caller), auth_token)?));
+            if result.is_ok() && crate::soter_mark::is_fingerprint(auth_token.authenticatorType) {
+                crate::soter_mark::mark_fingerprint();
+            }
+            result
         }
         ParsedAuthorizationRequest::OnDeviceUnlocked { user_id, password } => {
             ipc::with_omk_authorization_once(|auth| {

@@ -8,8 +8,8 @@ use crate::{
     parcel::{Args, Reply},
 };
 
-const QTI: &str = "vendor.qti.hardware.soter.ISoter";
-const TRUSTONIC: &str = "vendor.trustonic.hardware.soter.ITrustonicSoter";
+pub const QTI: &str = "vendor.qti.hardware.soter.ISoter";
+pub const TRUSTONIC: &str = "vendor.trustonic.hardware.soter.ITrustonicSoter";
 const HIDL: [&str; 4] = [
     "vendor.qti.hardware.soter@1.0::ISoter",
     "vendor.trustonic.hardware.soter@1.0::ITrustonicSoter",
@@ -86,6 +86,7 @@ impl Contract {
         read: impl Fn(usize, usize) -> Option<Vec<u8>>,
     ) -> Result<Option<(u32, Request)>, &'static str> {
         let Some(tx) = self.candidate(wire) else {
+            dispatch::note_unhandled(wire);
             return Ok(None);
         };
         let (tx, request) = if self == Self::Hidl {
@@ -97,6 +98,9 @@ impl Contract {
                 return Err("unexpected_aidl_objects");
             }
             let args = bytes.get(start..).ok_or("invalid_argument_offset")?;
+            // Standard and compact AIDL codes overlap (wire 2 is both the ATTK
+            // export and the compact AuthKey export), so the argument shape has
+            // to disambiguate them; an ambiguity is counted rather than routed.
             dispatch::resolve_request(wire, args).ok_or("invalid_aidl_arguments")?
         };
         Ok((!dispatch::ATTK_TRANSACTIONS.contains(&tx)).then_some((tx, request)))

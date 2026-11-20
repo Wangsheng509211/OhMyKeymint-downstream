@@ -114,9 +114,9 @@ pub(super) fn serve_selection(stream: &mut UnixStream) {
             "/data/adb/omk/inject"
         } else {
             if cfg!(target_arch = "aarch64") {
-                "/data/adb/modules/oh_my_keymint/libs/arm64-v8a/inject"
+                "/data/adb/modules/keymaster/libs/arm64-v8a/inject"
             } else {
-                "/data/adb/modules/oh_my_keymint/libs/x86_64/inject"
+                "/data/adb/modules/keymaster/libs/x86_64/inject"
             }
         };
         let selected = std::process::Command::new(binary)

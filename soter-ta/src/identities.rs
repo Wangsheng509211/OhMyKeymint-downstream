@@ -17,7 +17,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     dispatch::{self, Outcome, Request},
-    platform::Platform,
     state::TaState,
 };
 
@@ -41,18 +40,39 @@ pub struct App {
     pub cpu_id: String,
 }
 
+/// How the local identity answers SOTER callers.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Mode {
+    /// Per-application identities with their own CPU-ID and key material.
+    #[default]
+    Identity,
+    /// One global fixture identity for every caller: deterministic replies,
+    /// no per-application mapping and no biometric gate. Intended for detector
+    /// regression runs, not for everyday use.
+    Fixture,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
     pub version: u32,
     pub enabled: bool,
+    #[serde(default)]
+    pub mode: Mode,
     pub identities: Vec<Identity>,
     pub apps: BTreeMap<String, App>,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Self { version: 1, enabled: false, identities: Vec::new(), apps: BTreeMap::new() }
+        Self {
+            version: 1,
+            enabled: false,
+            mode: Mode::Identity,
+            identities: Vec::new(),
+            apps: BTreeMap::new(),
+        }
     }
 }
 
@@ -69,6 +89,8 @@ pub enum Change {
     App { target: String, identity: Option<String>, cpu_id: String },
     #[serde(rename = "apps")]
     Apps { targets: Vec<String>, identity: String },
+    #[serde(rename = "mode")]
+    Mode { mode: Mode },
 }
 
 pub fn valid_cpu_id(value: &str) -> bool {
@@ -102,6 +124,7 @@ impl Config {
             return Err("Unsupported or oversized SOTER identity configuration".into());
         }
         let mut ids = BTreeSet::new();
+        let mut cpu_ids = BTreeSet::new();
         for item in &self.identities {
             if !valid_id(&item.id)
                 || !ids.insert(item.id.as_str())
@@ -109,6 +132,7 @@ impl Config {
                 || item.name.chars().count() > 64
                 || item.name.chars().any(char::is_control)
                 || !valid_cpu_id(&item.cpu_id)
+                || !cpu_ids.insert(item.cpu_id.to_ascii_lowercase())
             {
                 return Err("Invalid local SOTER identity".into());
             }
@@ -257,6 +281,16 @@ pub fn public_json() -> Result<String, String> {
     serde_json::to_string(&load()?).map_err(|e| e.to_string())
 }
 
+/// Current answering mode, as a JSON string (`"identity"` / `"fixture"`).
+pub fn mode_json() -> Result<String, String> {
+    serde_json::to_string(&load()?.mode).map_err(|e| e.to_string())
+}
+
+/// Switch between the per-application identity and the global fixture.
+pub fn set_mode(mode: Mode) -> Result<(), String> {
+    change(Change::Mode { mode }).map(|_| ())
+}
+
 pub fn change(change: Change) -> Result<String, String> {
     if unsafe { libc::geteuid() } != 0 {
         return Err("SOTER configuration requires root".into());
@@ -271,6 +305,7 @@ fn change_at(root: &Path, change: Change) -> Result<Config, String> {
     let mut removed = None;
     match change {
         Change::Enabled { enabled } => config.enabled = enabled,
+        Change::Mode { mode } => config.mode = mode,
         Change::Add { name } => {
             if config.identities.len() >= 32
                 || name.trim().is_empty()
@@ -366,6 +401,9 @@ fn answer_at(
 ) -> Result<Outcome, String> {
     let _guard = private_directory(root)?;
     let config = config_at(root)?;
+    if config.enabled && config.mode == Mode::Fixture {
+        return answer_fixture(root, tx, request);
+    }
     let app = config.selected(uid, packages)?.ok_or("SOTER caller is not selected")?;
     if dispatch::ATTK_TRANSACTIONS.contains(&tx) {
         return Err("Factory ATTK operations remain native".into());
@@ -419,16 +457,80 @@ fn answer_at(
     if !app.cpu_id.is_empty() {
         state.cpu_id.clone_from(&app.cpu_id);
     }
-    let response = dispatch::handle_request(&mut state, tx, request, Platform::default())
+    let response = dispatch::handle_request(&mut state, tx, request, crate::platform::current().unwrap_or_default())
         .ok_or("Unsupported local SOTER request")?;
     state.cpu_id = cpu;
-    write(&path, &state.to_json())?;
+    let updated = state.to_json();
+    if updated != raw {
+        write(&path, &updated)?;
+    }
+    Ok(response)
+}
+
+/// Answer from the single global fixture identity.
+///
+/// The fixture has deterministic CPU-ID handling (no per-application override),
+/// is reachable by every caller while the feature is enabled, and still refuses
+/// a sign without a biometric mark, exactly like the software TA the detector
+/// fixture expects.
+fn answer_fixture(root: &Path, tx: u32, request: Request) -> Result<Outcome, String> {
+    let path = root.join("fixture.json");
+    let existing = read(&path)?;
+    let mut state = match &existing {
+        Some(raw) => TaState::from_json(raw).ok_or("Invalid fixture identity material")?,
+        None => {
+            let state = TaState::generate_local().ok_or("Cannot generate fixture material")?;
+            write(&path, &state.to_json())?;
+            state
+        }
+    };
+    let response = dispatch::handle_request(&mut state, tx, request, crate::platform::current().unwrap_or_default())
+        .ok_or("Unsupported local SOTER request")?;
+    let updated = state.to_json();
+    if existing.as_deref() != Some(updated.as_slice()) {
+        write(&path, &updated)?;
+    }
     Ok(response)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn duplicate_cpu_id_is_rejected() {
+        let root = tempfile::tempdir().unwrap();
+        fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        let first = change_at(root.path(), Change::Add { name: "First".into() }).unwrap();
+        let cpu_id = first.identities[0].cpu_id.clone();
+        let second = change_at(root.path(), Change::Add { name: "Second".into() }).unwrap();
+        let mut config = second.clone();
+        config.identities[1].cpu_id = cpu_id;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn fixture_mode_answers_unmapped_callers() {
+        let root = tempfile::tempdir().unwrap();
+        fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        change_at(root.path(), Change::Add { name: "Local".into() }).unwrap();
+        change_at(root.path(), Change::Mode { mode: Mode::Fixture }).unwrap();
+        change_at(root.path(), Change::Enabled { enabled: true }).unwrap();
+        // No app mapping exists for this uid, yet the fixture answers it.
+        let packages = "com.example.unmapped 10999";
+        assert_eq!(
+            answer_at(root.path(), 10999, dispatch::TX_GENERATE_ASK, Request::Uid(10999), packages)
+                .unwrap(),
+            Outcome::Code(0)
+        );
+        let exported =
+            answer_at(root.path(), 10999, dispatch::TX_EXPORT_ASK, Request::Uid(10999), packages)
+                .unwrap();
+        let Outcome::Buffer { data, field, code } = exported else { panic!("fixture ASK") };
+        assert_eq!(code, 0);
+        assert_eq!(field as usize, data.len());
+        assert!(root.path().join("fixture.json").exists());
+    }
 
     #[test]
     fn fresh_install_has_no_default_identity_or_files() {

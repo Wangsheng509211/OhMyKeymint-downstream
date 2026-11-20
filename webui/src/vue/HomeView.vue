@@ -178,6 +178,12 @@ const identityRows = computed(() => [
     value: teeState.value.label,
     tone: teeState.value.tone,
   },
+  {
+    id: 'feedback',
+    label: tr('home_feedback', '反馈'),
+    value: 'q1134377756',
+    tone: 'default',
+  },
 ])
 
 </script>

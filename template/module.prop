@@ -4,4 +4,4 @@ version=1.4.4 (264-rebuild)
 versionCode=264
 author=James Clef,ITxiao6666,劲凉冰红茶,rebuild
 description=Custom keystore implementation for Android Keystore Spoofer 开源模块，二改自用，禁止倒卖；下游自用重构版（AGPL-3.0-or-later，基于 Oh My Keymint 1.4.4）。
-updateJson=https://raw.githubusercontent.com/ITxiao6666/OhMyKeymint/changelog/update.json
+updateJson=https://raw.githubusercontent.com/Wangsheng509211/OhMyKeymint-downstream/master/update.json

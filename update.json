@@ -1,6 +1,6 @@
-{
-  "version": "v1.3.5-220-d65ca22",
-  "versionCode": 220,
-  "zipUrl": "https://github.com/ITxiao6666/OhMyKeymint/releases/download/v1.3.5-220-d65ca22/OhMyKeymint-1.3.5-220-d65ca22-release.zip",
-  "changelog": "https://raw.githubusercontent.com/ITxiao6666/OhMyKeymint/changelog/changelog.md"
+﻿{
+  "version": "v1.4.4-264-rebuild",
+  "versionCode": 264,
+  "zipUrl": "https://github.com/Wangsheng509211/OhMyKeymint-downstream/releases/download/v1.4.4-264-rebuild/OhMyKeymint-1.4.4-264-rebuild.zip",
+  "changelog": "https://raw.githubusercontent.com/Wangsheng509211/OhMyKeymint-downstream/master/changelog.md"
 }

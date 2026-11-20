@@ -1,4 +1,4 @@
-# Oh My Keymint - Attestation Bridge（下游重构版）
+# Oh My Keymint - Attestation Bridge
 
 > 本仓库是基于 [ITxiao6666/OhMyKeymint](https://github.com/ITxiao6666/OhMyKeymint) v1.4.4 修改的下游版本，不是官方版本，也不代表上游维护者。本版本的问题请反馈至[本仓库 Issues](https://github.com/Wangsheng509211/OhMyKeymint-downstream/issues)。
 
@@ -49,8 +49,6 @@ touch /data/adb/omk/restart.all
 哪些设置需要重启服务或设备，请参阅[生效说明](docs/CONFIGURATION.md#how-changes-are-loaded)。
 
 ## 更新源
-
-模块更新信息指向本仓库：
 
 ```
 https://raw.githubusercontent.com/Wangsheng509211/OhMyKeymint-downstream/master/update.json

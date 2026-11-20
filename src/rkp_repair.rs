@@ -15,6 +15,7 @@ use std::{
 use anyhow::{bail, Context, Result};
 
 const TOOL: &str = "/vendor/bin/KmInstallKeybox";
+const LOCK_FILE: &str = "/data/misc/keystore/omk/rkp-repair.lock";
 const ARGS: [&str; 4] = ["Keybox_file", "Device_ID", "true", "rkp"];
 const LIBRARIES: &str = "/vendor/lib64:/vendor/lib64/hw";
 const MAX_OUTPUT: usize = 16 * 1024;
@@ -47,7 +48,29 @@ pub fn run() -> Result<()> {
     {
         bail!("vendor RKP tool must be a root-owned executable, not writable by apps");
     }
-    tool.try_lock().context("another RKP repair is in progress")?;
+    // The vendor tool lives on a read-only mount where flock may report EIO.
+    // Serialize repairs through a private lock file in the writable OMK data
+    // directory instead of locking the vendor binary itself.
+    let lock = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(LOCK_FILE)
+        .context("cannot open the RKP repair lock file")?;
+    match lock.try_lock() {
+        Ok(()) => {}
+        Err(std::fs::TryLockError::WouldBlock) => {
+            anyhow::bail!("another RKP repair is in progress")
+        }
+        Err(std::fs::TryLockError::Error(error)) => {
+            // Some vendor/data mounts reject advisory locks with EIO. The
+            // repair is a manual, single-shot action, so continue without the
+            // lock instead of making the feature unusable.
+            eprintln!("omk: RKP repair lock unavailable ({error}); continuing without it");
+        }
+    }
     let (mut reader, writer) = UnixStream::pair()?;
     reader.set_nonblocking(true)?;
     let stderr: OwnedFd = writer.try_clone()?.into();

@@ -123,7 +123,11 @@ pub fn issue(options: IssueOptions) -> Result<String> {
         bail!("OMK data directory is not private");
     }
     if unsafe { libc::flock(data.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
-        bail!("Another OMK data operation is in progress");
+        let error = std::io::Error::last_os_error();
+        match error.raw_os_error() {
+            Some(libc::EWOULDBLOCK) => bail!("Another OMK data operation is in progress"),
+            _ => eprintln!("omk: RKP data lock unavailable ({error}); continuing without it"),
+        }
     }
     let fingerprint = match options.fingerprint {
         Some(value) => value,
